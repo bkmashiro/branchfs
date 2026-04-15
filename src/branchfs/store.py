@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -48,10 +49,19 @@ class BlobStore:
         blob_hash = self.hash_bytes(data)
         dest = self._blob_path(blob_hash)
         if not dest.exists():
-            # Write to tmp then atomic rename to avoid partial blobs.
-            tmp = dest.with_suffix(".tmp")
-            tmp.write_bytes(data)
-            tmp.rename(dest)
+            # Write to a unique tmp file then atomic rename to avoid
+            # partial blobs and races between concurrent writers.
+            fd, tmp_path = tempfile.mkstemp(dir=self.objects_dir)
+            try:
+                os.write(fd, data)
+            finally:
+                os.close(fd)
+            try:
+                os.rename(tmp_path, dest)
+            except BaseException:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
         return blob_hash
 
     def put_file(self, path: str | Path) -> str:
@@ -60,9 +70,15 @@ class BlobStore:
         blob_hash = self.hash_file(path)
         dest = self._blob_path(blob_hash)
         if not dest.exists():
-            tmp = dest.with_suffix(".tmp")
-            shutil.copy2(str(path), str(tmp))
-            tmp.rename(dest)
+            fd, tmp_path = tempfile.mkstemp(dir=self.objects_dir)
+            os.close(fd)
+            try:
+                shutil.copy2(str(path), tmp_path)
+                os.rename(tmp_path, str(dest))
+            except BaseException:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
         return blob_hash
 
     def get_bytes(self, blob_hash: str) -> bytes:
