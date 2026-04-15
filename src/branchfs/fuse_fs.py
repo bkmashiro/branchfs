@@ -90,8 +90,7 @@ class BranchFUSE(Operations):  # type: ignore[misc]
             }
 
         if rel in tree:
-            data = self._read_blob(tree[rel])
-            return {**self._default_stat, "st_size": len(data)}
+            return {**self._default_stat, "st_size": self._blob_size(tree[rel])}
 
         # Check if it's a directory (any tree entry starts with rel + /).
         prefix = rel + "/"
@@ -230,6 +229,15 @@ class BranchFUSE(Operations):  # type: ignore[misc]
 
     def _read_blob(self, blob_hash: str) -> bytes:
         return self.blob_store.get_bytes(blob_hash)
+
+    def _blob_size(self, blob_hash: str) -> int:
+        """Return the size of a blob without reading its contents.
+
+        Blob files are named by their hash and stored flat in the objects
+        directory, so a single ``stat()`` call gives us the content length
+        in O(1) — no data read required.
+        """
+        return self.blob_store._blob_path(blob_hash).stat().st_size
 
 
 def mount_fuse(
